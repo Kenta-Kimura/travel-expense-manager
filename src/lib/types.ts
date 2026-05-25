@@ -32,6 +32,7 @@ export type Expense = {
   id: string;
   tripId: string;
   date: string;
+  time?: string;
   amount: number;
   currency: CurrencyCode;
   exchangeRate: number;

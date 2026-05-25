@@ -28,6 +28,7 @@ export const exportExpensesCsv = (trip: Trip, expenses: Expense[]) => {
     [
       '旅行名',
       '日付',
+      '時刻',
       '金額',
       '通貨',
       '為替レート',
@@ -41,6 +42,7 @@ export const exportExpensesCsv = (trip: Trip, expenses: Expense[]) => {
     ...expenses.map((expense) => [
       trip.name,
       expense.date,
+      expense.time ?? '',
       expense.amount,
       expense.currency,
       expense.exchangeRate,
