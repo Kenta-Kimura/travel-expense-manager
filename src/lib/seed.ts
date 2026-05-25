@@ -1,4 +1,4 @@
-import type { AppData, Category, Companion, Trip } from './types';
+import type { AppData, Category, Companion, PaymentMethod, Trip } from './types';
 
 export const initialCategories: Category[] = [
   { id: 'cat-food', name: '食費' },
@@ -11,6 +11,11 @@ export const initialCategories: Category[] = [
 ];
 
 export const initialCompanions: Companion[] = [{ id: 'person-me', name: '自分' }];
+
+export const initialPaymentMethods: PaymentMethod[] = [
+  { id: 'pay-cash', name: '現金' },
+  { id: 'pay-card', name: 'カード' },
+];
 
 export const createId = (prefix: string) => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -39,6 +44,7 @@ export const createTrip = (overrides: Partial<Trip> = {}): Trip => {
     ],
     categories: overrides.categories ?? initialCategories,
     companions: overrides.companions ?? initialCompanions,
+    paymentMethods: overrides.paymentMethods ?? [],
     createdAt: overrides.createdAt ?? now,
     updatedAt: now,
   };
@@ -56,5 +62,6 @@ export const createInitialData = (): AppData => {
     trips: [trip],
     expenses: [],
     selectedTripId: trip.id,
+    paymentMethods: initialPaymentMethods,
   };
 };

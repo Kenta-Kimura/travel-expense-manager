@@ -150,6 +150,16 @@ button:focus-visible {
   background: #eaf6f8;
 }
 
+.sidebar-settings {
+  margin-top: 18px;
+  border-top: 1px solid #e5ebf0;
+  padding-top: 14px;
+}
+
+.sidebar-settings button {
+  width: 100%;
+}
+
 .workspace {
   min-width: 0;
   padding: 22px;
@@ -210,7 +220,7 @@ button:focus-visible {
 .toast-status {
   position: fixed;
   right: 22px;
-  bottom: 22px;
+  top: 22px;
   z-index: 20;
   margin: 0;
   border: 1px solid #b9e0c1;
@@ -343,7 +353,7 @@ button:focus-visible {
 
 .expense-tools {
   display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) repeat(3, minmax(140px, 1fr));
+  grid-template-columns: minmax(220px, 1.4fr) repeat(4, minmax(130px, 1fr));
   gap: 12px;
   margin-bottom: 12px;
 }
@@ -380,7 +390,7 @@ button:focus-visible {
 
 table {
   width: 100%;
-  min-width: 1260px;
+  min-width: 1360px;
   border-collapse: collapse;
   background: #ffffff;
 }
@@ -617,6 +627,12 @@ tr:last-child td {
   min-height: 0;
   overflow-y: auto;
   padding: 16px;
+}
+
+.backup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .bulk-edit-panel {

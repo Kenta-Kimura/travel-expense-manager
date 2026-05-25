@@ -2,19 +2,30 @@ import type { ChangeEvent, FormEvent, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { exportExpensesCsv, exportJson } from './lib/backup';
 import { summarizeTrip, toBaseAmount } from './lib/calculations';
-import { createId, createTrip, today } from './lib/seed';
+import { createId, createTrip, initialPaymentMethods, today } from './lib/seed';
 import { loadAppData, replaceAppData, saveAppData } from './lib/storage';
-import type { AppData, Category, Companion, CurrencyCode, Expense, ExchangeRate, Trip } from './lib/types';
+import type { AppData, Category, Companion, CurrencyCode, Expense, ExchangeRate, PaymentMethod, Trip } from './lib/types';
 
 type ExpenseDraft = Omit<Expense, 'id' | 'tripId' | 'createdAt' | 'updatedAt'>;
 const BASE_CURRENCY: CurrencyCode = 'JPY';
-type SortKey = 'date' | 'amount' | 'currency' | 'exchangeRate' | 'baseAmount' | 'category' | 'payer' | 'place' | 'memo';
+type SortKey =
+  | 'date'
+  | 'amount'
+  | 'currency'
+  | 'exchangeRate'
+  | 'baseAmount'
+  | 'category'
+  | 'payer'
+  | 'paymentMethod'
+  | 'place'
+  | 'memo';
 type SortDirection = 'asc' | 'desc';
 type ExpenseFilters = {
   search: string;
   categoryId: string;
   currency: string;
   payerId: string;
+  paymentMethodId: string;
 };
 type BulkEditDraft = {
   date: string;
@@ -23,6 +34,7 @@ type BulkEditDraft = {
   exchangeRate: number;
   categoryId: string;
   payerId: string;
+  paymentMethodId: string;
   participantIds: string[];
   place: string;
   memo: string;
@@ -42,6 +54,7 @@ const emptyExpenseDraft = (trip: Trip): ExpenseDraft => {
     exchangeRate: rate,
     categoryId: trip.categories[0]?.id ?? 'cat-other',
     payerId,
+    paymentMethodId: '',
     participantIds: trip.companions.map((person) => person.id),
     memo: '',
     place: '',
@@ -74,8 +87,9 @@ const readJsonFile = (file: File): Promise<AppData> =>
 
 const normalizeAppData = (data: AppData): AppData => ({
   ...data,
-  trips: data.trips.map((trip) => ({ ...trip, baseCurrency: BASE_CURRENCY })),
-  expenses: data.expenses.map((expense) => ({ ...expense, time: expense.time ?? '' })),
+  paymentMethods: data.paymentMethods ?? initialPaymentMethods,
+  trips: data.trips.map((trip) => ({ ...trip, baseCurrency: BASE_CURRENCY, paymentMethods: trip.paymentMethods ?? [] })),
+  expenses: data.expenses.map((expense) => ({ ...expense, time: expense.time ?? '', paymentMethodId: expense.paymentMethodId ?? '' })),
 });
 
 const createBulkEditDraft = (trip: Trip): BulkEditDraft => {
@@ -87,6 +101,7 @@ const createBulkEditDraft = (trip: Trip): BulkEditDraft => {
     exchangeRate: base.exchangeRate,
     categoryId: base.categoryId,
     payerId: base.payerId,
+    paymentMethodId: base.paymentMethodId ?? '',
     participantIds: base.participantIds,
     place: '',
     memo: '',
@@ -100,6 +115,7 @@ const createBulkEditApply = (): BulkEditApply => ({
   exchangeRate: false,
   categoryId: false,
   payerId: false,
+  paymentMethodId: false,
   participantIds: false,
   place: false,
   memo: false,
@@ -146,7 +162,7 @@ function App() {
   const [activeSettings, setActiveSettings] = useState<'trip' | 'app' | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [status, setStatus] = useState('');
-  const [filters, setFilters] = useState<ExpenseFilters>({ search: '', categoryId: '', currency: '', payerId: '' });
+  const [filters, setFilters] = useState<ExpenseFilters>({ search: '', categoryId: '', currency: '', payerId: '', paymentMethodId: '' });
   const [sortKey, setSortKey] = useState<SortKey>('date');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [selectedExpenseIds, setSelectedExpenseIds] = useState<string[]>([]);
@@ -271,6 +287,47 @@ function App() {
     updateTrip({ companions: selectedTrip.companions.filter((person) => person.id !== id) });
   };
 
+  const upsertCommonPaymentMethod = (method: PaymentMethod) => {
+    const exists = data.paymentMethods.some((item) => item.id === method.id);
+    updateData((current) => ({
+      ...current,
+      paymentMethods: exists
+        ? current.paymentMethods.map((item) => (item.id === method.id ? method : item))
+        : [...current.paymentMethods, method],
+    }));
+  };
+
+  const removeCommonPaymentMethod = (id: string) => {
+    updateData((current) => ({
+      ...current,
+      paymentMethods: current.paymentMethods.filter((method) => method.id !== id),
+      expenses: current.expenses.map((expense) =>
+        expense.paymentMethodId === id ? { ...expense, paymentMethodId: '', updatedAt: new Date().toISOString() } : expense,
+      ),
+    }));
+  };
+
+  const upsertTripPaymentMethod = (method: PaymentMethod) => {
+    if (!selectedTrip) return;
+    const exists = selectedTrip.paymentMethods.some((item) => item.id === method.id);
+    updateTrip({
+      paymentMethods: exists
+        ? selectedTrip.paymentMethods.map((item) => (item.id === method.id ? method : item))
+        : [...selectedTrip.paymentMethods, method],
+    });
+  };
+
+  const removeTripPaymentMethod = (id: string) => {
+    if (!selectedTrip) return;
+    updateTrip({ paymentMethods: selectedTrip.paymentMethods.filter((method) => method.id !== id) });
+    updateData((current) => ({
+      ...current,
+      expenses: current.expenses.map((expense) =>
+        expense.paymentMethodId === id ? { ...expense, paymentMethodId: '', updatedAt: new Date().toISOString() } : expense,
+      ),
+    }));
+  };
+
   const upsertRate = (rate: ExchangeRate) => {
     if (!selectedTrip) return;
     const exists = selectedTrip.defaultRates.some((item) => item.currency === rate.currency);
@@ -385,6 +442,7 @@ function App() {
             exchangeRate: first.exchangeRate,
             categoryId: first.categoryId,
             payerId: first.payerId,
+            paymentMethodId: first.paymentMethodId ?? '',
             participantIds: first.participantIds,
             place: first.place,
             memo: first.memo,
@@ -421,6 +479,7 @@ function App() {
           ...(bulkApply.exchangeRate ? { exchangeRate: bulkDraft.exchangeRate } : {}),
           ...(bulkApply.categoryId ? { categoryId: bulkDraft.categoryId } : {}),
           ...(bulkApply.payerId ? { payerId: bulkDraft.payerId } : {}),
+          ...(bulkApply.paymentMethodId ? { paymentMethodId: bulkDraft.paymentMethodId } : {}),
           ...(bulkApply.participantIds ? { participantIds: bulkDraft.participantIds } : {}),
           ...(bulkApply.place ? { place: bulkDraft.place } : {}),
           ...(bulkApply.memo ? { memo: bulkDraft.memo } : {}),
@@ -463,6 +522,8 @@ function App() {
 
   const companions = new Map(selectedTrip.companions.map((person) => [person.id, person.name]));
   const categories = new Map(selectedTrip.categories.map((category) => [category.id, category.name]));
+  const paymentMethodOptions = [...data.paymentMethods, ...selectedTrip.paymentMethods];
+  const paymentMethods = new Map(paymentMethodOptions.map((method) => [method.id, method.name]));
   const availableCurrencies = Array.from(new Set([...selectedTrip.defaultRates.map((rate) => rate.currency), ...tripExpenses.map((expense) => expense.currency)]));
   const visibleExpenses = tripExpenses
     .filter((expense) => {
@@ -473,6 +534,7 @@ function App() {
         expense.currency,
         categories.get(expense.categoryId) ?? '',
         companions.get(expense.payerId) ?? '',
+        paymentMethods.get(expense.paymentMethodId ?? '') ?? '',
         expense.place,
         expense.memo,
       ]
@@ -483,7 +545,9 @@ function App() {
         (!searchText || searchable.includes(searchText)) &&
         (!filters.categoryId || expense.categoryId === filters.categoryId) &&
         (!filters.currency || expense.currency === filters.currency) &&
-        (!filters.payerId || expense.payerId === filters.payerId)
+        (!filters.payerId || expense.payerId === filters.payerId) &&
+        (!filters.paymentMethodId ||
+          (filters.paymentMethodId === '__none__' ? !expense.paymentMethodId : expense.paymentMethodId === filters.paymentMethodId))
       );
     })
     .sort((a, b) => {
@@ -495,6 +559,7 @@ function App() {
         baseAmount: [toBaseAmount(a), toBaseAmount(b)],
         category: [categories.get(a.categoryId) ?? '', categories.get(b.categoryId) ?? ''],
         payer: [companions.get(a.payerId) ?? '', companions.get(b.payerId) ?? ''],
+        paymentMethod: [paymentMethods.get(a.paymentMethodId ?? '') ?? '', paymentMethods.get(b.paymentMethodId ?? '') ?? ''],
         place: [a.place, b.place],
         memo: [a.memo, b.memo],
       };
@@ -540,6 +605,12 @@ function App() {
             </button>
           ))}
         </div>
+
+        <div className="sidebar-settings">
+          <button type="button" onClick={() => setActiveSettings('app')}>
+            アプリ設定
+          </button>
+        </div>
       </aside>
 
       <main className="workspace">
@@ -554,19 +625,12 @@ function App() {
             <button type="button" onClick={() => setActiveSettings('trip')}>
               旅行を編集
             </button>
-            <button type="button" onClick={() => setActiveSettings('app')}>
-              全体設定
-            </button>
-            <button type="button" onClick={() => exportExpensesCsv({ ...selectedTrip, baseCurrency: BASE_CURRENCY }, tripExpenses)}>
+            <button
+              type="button"
+              onClick={() => exportExpensesCsv({ ...selectedTrip, baseCurrency: BASE_CURRENCY, paymentMethods: paymentMethodOptions }, tripExpenses)}
+            >
               CSVエクスポート
             </button>
-            <button type="button" onClick={() => exportJson(data)}>
-              JSONエクスポート
-            </button>
-            <label className="file-button">
-              JSONインポート
-              <input accept="application/json" type="file" onChange={importJson} />
-            </label>
           </div>
         </header>
 
@@ -636,6 +700,23 @@ function App() {
                     {selectedTrip.companions.map((person) => (
                       <option key={person.id} value={person.id}>
                         {person.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="決済方法">
+                  <select value={expenseDraft.paymentMethodId ?? ''} onChange={(event) => setDraft({ paymentMethodId: event.target.value })}>
+                    <option value="">未設定</option>
+                    {data.paymentMethods.length > 0 && <option disabled>共通</option>}
+                    {data.paymentMethods.map((method) => (
+                      <option key={method.id} value={method.id}>
+                        {method.name}
+                      </option>
+                    ))}
+                    {selectedTrip.paymentMethods.length > 0 && <option disabled>旅行ごと</option>}
+                    {selectedTrip.paymentMethods.map((method) => (
+                      <option key={method.id} value={method.id}>
+                        {method.name}
                       </option>
                     ))}
                   </select>
@@ -725,6 +806,20 @@ function App() {
                     ))}
                   </select>
                 </Field>
+                <Field label="決済方法">
+                  <select
+                    value={filters.paymentMethodId}
+                    onChange={(event) => setFilters((current) => ({ ...current, paymentMethodId: event.target.value }))}
+                  >
+                    <option value="">すべて</option>
+                    <option value="__none__">未設定</option>
+                    {paymentMethodOptions.map((method) => (
+                      <option key={method.id} value={method.id}>
+                        {method.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
               </div>
               <div className="bulk-toolbar">
                 <span>
@@ -793,6 +888,11 @@ function App() {
                           支払者{sortLabel('payer')}
                         </button>
                       </th>
+                      <th>
+                        <button className="sort-button" type="button" onClick={() => toggleSort('paymentMethod')}>
+                          決済方法{sortLabel('paymentMethod')}
+                        </button>
+                      </th>
                       <th>負担対象者</th>
                       <th>
                         <button className="sort-button" type="button" onClick={() => toggleSort('place')}>
@@ -826,6 +926,7 @@ function App() {
                         <td className="number">{formatMoney(toBaseAmount(expense), BASE_CURRENCY)}</td>
                         <td>{categories.get(expense.categoryId) ?? ''}</td>
                         <td>{companions.get(expense.payerId) ?? ''}</td>
+                        <td>{paymentMethods.get(expense.paymentMethodId ?? '') ?? ''}</td>
                         <td>{expense.participantIds.map((id) => companions.get(id)).join(' / ')}</td>
                         <td>{expense.place}</td>
                         <td>{expense.memo}</td>
@@ -841,7 +942,7 @@ function App() {
                     ))}
                     {visibleExpenses.length === 0 && (
                       <tr>
-                        <td className="empty-row" colSpan={13}>
+                        <td className="empty-row" colSpan={14}>
                           {tripExpenses.length === 0 ? '支出を追加すると、ここに一覧と集計が表示されます。' : '条件に一致する支出がありません。'}
                         </td>
                       </tr>
@@ -906,12 +1007,37 @@ function App() {
 
           <NameEditor title="同行者" items={selectedTrip.companions} prefix="person" onRemove={removeCompanion} onSave={upsertCompanion} />
           <RatesEditor rates={selectedTrip.defaultRates} onRemove={removeRate} onSave={upsertRate} />
+          <NameEditor
+            title="旅行ごとの決済方法"
+            items={selectedTrip.paymentMethods}
+            prefix="trip-pay"
+            onRemove={removeTripPaymentMethod}
+            onSave={upsertTripPaymentMethod}
+          />
         </SettingsDialog>
       )}
 
       {activeSettings === 'app' && (
-        <SettingsDialog title="全体設定" onClose={() => setActiveSettings(null)}>
+        <SettingsDialog title="アプリ設定" onClose={() => setActiveSettings(null)}>
           <NameEditor title="カテゴリ" items={selectedTrip.categories} prefix="cat" onRemove={removeCategory} onSave={upsertCategory} />
+          <NameEditor
+            title="共通の決済方法"
+            items={data.paymentMethods}
+            prefix="pay"
+            onRemove={removeCommonPaymentMethod}
+            onSave={upsertCommonPaymentMethod}
+          />
+          <Section title="バックアップ">
+            <div className="backup-actions">
+              <button type="button" onClick={() => exportJson(data)}>
+                JSONエクスポート
+              </button>
+              <label className="file-button">
+                JSONインポート
+                <input accept="application/json" type="file" onChange={importJson} />
+              </label>
+            </div>
+          </Section>
         </SettingsDialog>
       )}
 
@@ -922,6 +1048,7 @@ function App() {
             categories={selectedTrip.categories}
             companions={selectedTrip.companions}
             draft={bulkDraft}
+            paymentMethods={paymentMethodOptions}
             rates={selectedTrip.defaultRates}
             onApply={applyBulkEdit}
             onChangeApply={(key, checked) => setBulkApply((current) => ({ ...current, [key]: checked }))}
@@ -960,6 +1087,7 @@ const BulkEditPanel = ({
   categories,
   companions,
   draft,
+  paymentMethods,
   rates,
   onApply,
   onChangeApply,
@@ -969,6 +1097,7 @@ const BulkEditPanel = ({
   categories: Category[];
   companions: Companion[];
   draft: BulkEditDraft;
+  paymentMethods: PaymentMethod[];
   rates: ExchangeRate[];
   onApply: () => void;
   onChangeApply: (key: keyof BulkEditDraft, checked: boolean) => void;
@@ -1047,6 +1176,20 @@ const BulkEditPanel = ({
           {companions.map((person) => (
             <option key={person.id} value={person.id}>
               {person.name}
+            </option>
+          ))}
+        </select>
+      </ApplyField>
+      <ApplyField field="paymentMethodId" label="決済方法">
+        <select
+          disabled={!apply.paymentMethodId}
+          value={draft.paymentMethodId}
+          onChange={(event) => onChangeDraft({ paymentMethodId: event.target.value })}
+        >
+          <option value="">未設定</option>
+          {paymentMethods.map((method) => (
+            <option key={method.id} value={method.id}>
+              {method.name}
             </option>
           ))}
         </select>

@@ -10,6 +10,11 @@ export type Companion = {
   name: string;
 };
 
+export type PaymentMethod = {
+  id: string;
+  name: string;
+};
+
 export type ExchangeRate = {
   currency: CurrencyCode;
   rateToBase: number;
@@ -24,6 +29,7 @@ export type Trip = {
   defaultRates: ExchangeRate[];
   categories: Category[];
   companions: Companion[];
+  paymentMethods: PaymentMethod[];
   createdAt: string;
   updatedAt: string;
 };
@@ -38,6 +44,7 @@ export type Expense = {
   exchangeRate: number;
   categoryId: string;
   payerId: string;
+  paymentMethodId?: string;
   participantIds: string[];
   memo: string;
   place: string;
@@ -50,6 +57,7 @@ export type AppData = {
   trips: Trip[];
   expenses: Expense[];
   selectedTripId: string | null;
+  paymentMethods: PaymentMethod[];
 };
 
 export type Settlement = {
