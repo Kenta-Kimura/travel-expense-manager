@@ -1,6 +1,7 @@
 import type { Expense, Settlement, SummaryRow, Trip, TripSummary } from './types';
 
 export const toBaseAmount = (expense: Expense) => expense.amount * expense.exchangeRate;
+export const UNCATEGORIZED_LABEL = '未入力';
 
 const add = (map: Map<string, number>, key: string, value: number) => {
   map.set(key, (map.get(key) ?? 0) + value);
@@ -34,7 +35,7 @@ export const summarizeTrip = (trip: Trip, expenses: Expense[]): TripSummary => {
   expenses.forEach((expense) => {
     const baseAmount = toBaseAmount(expense);
     totalBase += baseAmount;
-    add(categoryTotals, expense.categoryId, baseAmount);
+    add(categoryTotals, expense.categoryId || UNCATEGORIZED_LABEL, baseAmount);
     add(currencyTotals, expense.currency, expense.amount);
     add(payerTotals, expense.payerId, baseAmount);
     add(personPaid, expense.payerId, baseAmount);
@@ -57,7 +58,7 @@ export const summarizeTrip = (trip: Trip, expenses: Expense[]): TripSummary => {
   return {
     totalBase,
     dailyAverageBase: totalBase / getTripDays(trip),
-    categoryTotals: rowsFromMap(categoryTotals, (id) => categories.get(id) ?? '未分類'),
+    categoryTotals: rowsFromMap(categoryTotals, (id) => categories.get(id) ?? UNCATEGORIZED_LABEL),
     currencyTotals: rowsFromMap(currencyTotals, (id) => id),
     payerTotals: rowsFromMap(payerTotals, (id) => companions.get(id) ?? '不明'),
     personPaid: rowsFromMap(personPaid, (id) => companions.get(id) ?? '不明'),

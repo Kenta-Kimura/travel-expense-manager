@@ -134,13 +134,31 @@ button:focus-visible {
 
 .trip-item {
   display: grid;
-  gap: 4px;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  padding: 10px;
+  border: 1px solid #cdd6e1;
+  border-radius: 7px;
+  background: #ffffff;
   text-align: left;
 }
 
-.trip-item span {
+.trip-select-button {
+  display: grid;
+  gap: 4px;
+  min-height: 0;
+  border: 0;
+  padding: 10px;
+  text-align: left;
+  background: transparent;
+}
+
+.trip-select-button:hover {
+  background: transparent;
+}
+
+.trip-select-button span {
   color: #677585;
   font-size: 12px;
 }
@@ -148,6 +166,23 @@ button:focus-visible {
 .trip-item.selected {
   border-color: #2f7f8f;
   background: #eaf6f8;
+}
+
+.pin-button {
+  width: 30px;
+  min-height: 30px;
+  margin-right: 6px;
+  border: 0;
+  padding: 0;
+  color: #7a8794;
+  background: transparent;
+  font-size: 16px;
+}
+
+.pin-button:hover,
+.pin-button.pinned {
+  color: #b7791f;
+  background: #fff7e6;
 }
 
 .sidebar-settings {

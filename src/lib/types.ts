@@ -25,6 +25,7 @@ export type Trip = {
   name: string;
   startDate: string;
   endDate: string;
+  pinned: boolean;
   baseCurrency: CurrencyCode;
   defaultRates: ExchangeRate[];
   categories: Category[];

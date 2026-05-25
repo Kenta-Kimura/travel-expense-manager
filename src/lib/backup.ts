@@ -1,5 +1,5 @@
 import type { AppData, Expense, Trip } from './types';
-import { toBaseAmount } from './calculations';
+import { toBaseAmount, UNCATEGORIZED_LABEL } from './calculations';
 
 const escapeCsv = (value: string | number) => {
   const text = String(value);
@@ -49,7 +49,7 @@ export const exportExpensesCsv = (trip: Trip, expenses: Expense[]) => {
       expense.currency,
       expense.exchangeRate,
       toBaseAmount(expense).toFixed(2),
-      categories.get(expense.categoryId) ?? '',
+      categories.get(expense.categoryId) ?? UNCATEGORIZED_LABEL,
       companions.get(expense.payerId) ?? '',
       paymentMethods.get(expense.paymentMethodId ?? '') ?? '',
       expense.participantIds.map((id) => companions.get(id) ?? '').join(' / '),

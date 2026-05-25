@@ -1,7 +1,7 @@
 import type { ChangeEvent, FormEvent, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { exportExpensesCsv, exportJson } from './lib/backup';
-import { summarizeTrip, toBaseAmount } from './lib/calculations';
+import { summarizeTrip, toBaseAmount, UNCATEGORIZED_LABEL } from './lib/calculations';
 import { createId, createTrip, initialPaymentMethods, today } from './lib/seed';
 import { loadAppData, replaceAppData, saveAppData } from './lib/storage';
 import type { AppData, Category, Companion, CurrencyCode, Expense, ExchangeRate, PaymentMethod, Trip } from './lib/types';
@@ -52,7 +52,7 @@ const emptyExpenseDraft = (trip: Trip): ExpenseDraft => {
     amount: 0,
     currency,
     exchangeRate: rate,
-    categoryId: trip.categories[0]?.id ?? 'cat-other',
+    categoryId: '',
     payerId,
     paymentMethodId: '',
     participantIds: trip.companions.map((person) => person.id),
@@ -88,7 +88,12 @@ const readJsonFile = (file: File): Promise<AppData> =>
 const normalizeAppData = (data: AppData): AppData => ({
   ...data,
   paymentMethods: data.paymentMethods ?? initialPaymentMethods,
-  trips: data.trips.map((trip) => ({ ...trip, baseCurrency: BASE_CURRENCY, paymentMethods: trip.paymentMethods ?? [] })),
+  trips: data.trips.map((trip) => ({
+    ...trip,
+    pinned: trip.pinned ?? false,
+    baseCurrency: BASE_CURRENCY,
+    paymentMethods: trip.paymentMethods ?? [],
+  })),
   expenses: data.expenses.map((expense) => ({ ...expense, time: expense.time ?? '', paymentMethodId: expense.paymentMethodId ?? '' })),
 });
 
@@ -258,7 +263,6 @@ function App() {
 
   const removeCategory = (id: string) => {
     if (!selectedTrip) return;
-    const fallbackCategoryId = selectedTrip.categories.find((category) => category.id !== id)?.id ?? 'cat-other';
     updateData((current) => ({
       ...current,
       trips: current.trips.map((trip) => ({
@@ -267,7 +271,16 @@ function App() {
         updatedAt: new Date().toISOString(),
       })),
       expenses: current.expenses.map((expense) =>
-        expense.categoryId === id ? { ...expense, categoryId: fallbackCategoryId, updatedAt: new Date().toISOString() } : expense,
+        expense.categoryId === id ? { ...expense, categoryId: '', updatedAt: new Date().toISOString() } : expense,
+      ),
+    }));
+  };
+
+  const toggleTripPinned = (tripId: string) => {
+    updateData((current) => ({
+      ...current,
+      trips: current.trips.map((trip) =>
+        trip.id === tripId ? { ...trip, pinned: !trip.pinned, updatedAt: new Date().toISOString() } : trip,
       ),
     }));
   };
@@ -410,7 +423,6 @@ function App() {
     if (!expenseDraft.amount || expenseDraft.amount <= 0) errors.push('金額は0より大きい値を入力してください。');
     if (!expenseDraft.currency) errors.push('通貨を選択してください。');
     if (!expenseDraft.exchangeRate || expenseDraft.exchangeRate <= 0) errors.push('為替レートは0より大きい値を入力してください。');
-    if (!expenseDraft.categoryId) errors.push('カテゴリを選択してください。');
     if (!expenseDraft.payerId) errors.push('支払者を選択してください。');
     if (expenseDraft.participantIds.length === 0) errors.push('負担対象者を1人以上選択してください。');
     return errors;
@@ -522,9 +534,16 @@ function App() {
 
   const companions = new Map(selectedTrip.companions.map((person) => [person.id, person.name]));
   const categories = new Map(selectedTrip.categories.map((category) => [category.id, category.name]));
+  const categoryLabel = (categoryId: string) => categories.get(categoryId) ?? UNCATEGORIZED_LABEL;
   const paymentMethodOptions = [...data.paymentMethods, ...selectedTrip.paymentMethods];
   const paymentMethods = new Map(paymentMethodOptions.map((method) => [method.id, method.name]));
   const availableCurrencies = Array.from(new Set([...selectedTrip.defaultRates.map((rate) => rate.currency), ...tripExpenses.map((expense) => expense.currency)]));
+  const sortedTrips = [...data.trips].sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+    const dateResult = compareValues(a.startDate, b.startDate);
+    if (dateResult !== 0) return dateResult;
+    return compareValues(a.name, b.name);
+  });
   const visibleExpenses = tripExpenses
     .filter((expense) => {
       const searchText = filters.search.trim().toLowerCase();
@@ -532,7 +551,7 @@ function App() {
         expense.date,
         expense.time ?? '',
         expense.currency,
-        categories.get(expense.categoryId) ?? '',
+        categoryLabel(expense.categoryId),
         companions.get(expense.payerId) ?? '',
         paymentMethods.get(expense.paymentMethodId ?? '') ?? '',
         expense.place,
@@ -543,7 +562,7 @@ function App() {
 
       return (
         (!searchText || searchable.includes(searchText)) &&
-        (!filters.categoryId || expense.categoryId === filters.categoryId) &&
+        (!filters.categoryId || (filters.categoryId === '__none__' ? !expense.categoryId : expense.categoryId === filters.categoryId)) &&
         (!filters.currency || expense.currency === filters.currency) &&
         (!filters.payerId || expense.payerId === filters.payerId) &&
         (!filters.paymentMethodId ||
@@ -557,7 +576,7 @@ function App() {
         currency: [a.currency, b.currency],
         exchangeRate: [a.exchangeRate, b.exchangeRate],
         baseAmount: [toBaseAmount(a), toBaseAmount(b)],
-        category: [categories.get(a.categoryId) ?? '', categories.get(b.categoryId) ?? ''],
+        category: [categoryLabel(a.categoryId), categoryLabel(b.categoryId)],
         payer: [companions.get(a.payerId) ?? '', companions.get(b.payerId) ?? ''],
         paymentMethod: [paymentMethods.get(a.paymentMethodId ?? '') ?? '', paymentMethods.get(b.paymentMethodId ?? '') ?? ''],
         place: [a.place, b.place],
@@ -587,22 +606,32 @@ function App() {
         </button>
 
         <div className="trip-list">
-          {data.trips.map((trip) => (
-            <button
-              className={trip.id === selectedTrip.id ? 'trip-item selected' : 'trip-item'}
-              key={trip.id}
-              type="button"
-              onClick={() => {
-                setData((current) => ({ ...current, selectedTripId: trip.id }));
-                setExpenseDraft(emptyExpenseDraft(trip));
-                setEditingExpenseId(null);
-              }}
-            >
-              <strong>{trip.name}</strong>
-              <span>
-                {trip.startDate} - {trip.endDate}
-              </span>
-            </button>
+          {sortedTrips.map((trip) => (
+            <div className={trip.id === selectedTrip.id ? 'trip-item selected' : 'trip-item'} key={trip.id}>
+              <button
+                className="trip-select-button"
+                type="button"
+                onClick={() => {
+                  setData((current) => ({ ...current, selectedTripId: trip.id }));
+                  setExpenseDraft(emptyExpenseDraft(trip));
+                  setEditingExpenseId(null);
+                }}
+              >
+                <strong>{trip.name}</strong>
+                <span>
+                  {trip.startDate} - {trip.endDate}
+                </span>
+              </button>
+              <button
+                aria-label={trip.pinned ? `${trip.name}のピン留めを解除` : `${trip.name}をピン留め`}
+                className={trip.pinned ? 'pin-button pinned' : 'pin-button'}
+                type="button"
+                onClick={() => toggleTripPinned(trip.id)}
+                title={trip.pinned ? 'ピン留めを解除' : 'ピン留め'}
+              >
+                {trip.pinned ? '★' : '☆'}
+              </button>
+            </div>
           ))}
         </div>
 
@@ -686,8 +715,9 @@ function App() {
                     onChange={(event) => setDraft({ exchangeRate: Number(event.target.value) })}
                   />
                 </Field>
-                <Field label="カテゴリ" required>
+                <Field label="カテゴリ">
                   <select value={expenseDraft.categoryId} onChange={(event) => setDraft({ categoryId: event.target.value })}>
+                    <option value="">未入力</option>
                     {selectedTrip.categories.map((category) => (
                       <option key={category.id} value={category.id}>
                         {category.name}
@@ -779,6 +809,7 @@ function App() {
                 <Field label="カテゴリ">
                   <select value={filters.categoryId} onChange={(event) => setFilters((current) => ({ ...current, categoryId: event.target.value }))}>
                     <option value="">すべて</option>
+                    <option value="__none__">未入力</option>
                     {selectedTrip.categories.map((category) => (
                       <option key={category.id} value={category.id}>
                         {category.name}
@@ -924,7 +955,7 @@ function App() {
                         <td>{expense.currency}</td>
                         <td className="number">{formatNumber(expense.exchangeRate)}</td>
                         <td className="number">{formatMoney(toBaseAmount(expense), BASE_CURRENCY)}</td>
-                        <td>{categories.get(expense.categoryId) ?? ''}</td>
+                        <td>{categoryLabel(expense.categoryId)}</td>
                         <td>{companions.get(expense.payerId) ?? ''}</td>
                         <td>{paymentMethods.get(expense.paymentMethodId ?? '') ?? ''}</td>
                         <td>{expense.participantIds.map((id) => companions.get(id)).join(' / ')}</td>
@@ -1164,6 +1195,7 @@ const BulkEditPanel = ({
       </ApplyField>
       <ApplyField field="categoryId" label="カテゴリ">
         <select disabled={!apply.categoryId} value={draft.categoryId} onChange={(event) => onChangeDraft({ categoryId: event.target.value })}>
+          <option value="">未入力</option>
           {categories.map((category) => (
             <option key={category.id} value={category.id}>
               {category.name}

@@ -36,6 +36,7 @@ export const createTrip = (overrides: Partial<Trip> = {}): Trip => {
     name: overrides.name ?? '新しい旅行',
     startDate,
     endDate: overrides.endDate ?? startDate,
+    pinned: overrides.pinned ?? false,
     baseCurrency: overrides.baseCurrency ?? 'JPY',
     defaultRates: overrides.defaultRates ?? [
       { currency: 'JPY', rateToBase: 1 },
