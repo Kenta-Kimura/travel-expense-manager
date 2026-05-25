@@ -7,9 +7,10 @@ import { loadAppData, replaceAppData, saveAppData } from './lib/storage';
 import type { AppData, Category, Companion, CurrencyCode, Expense, ExchangeRate, Trip } from './lib/types';
 
 type ExpenseDraft = Omit<Expense, 'id' | 'tripId' | 'createdAt' | 'updatedAt'>;
+const BASE_CURRENCY: CurrencyCode = 'JPY';
 
 const emptyExpenseDraft = (trip: Trip): ExpenseDraft => {
-  const currency = trip.defaultRates[0]?.currency ?? trip.baseCurrency;
+  const currency = trip.defaultRates[0]?.currency ?? BASE_CURRENCY;
   const rate = trip.defaultRates.find((item) => item.currency === currency)?.rateToBase ?? 1;
   const payerId = trip.companions[0]?.id ?? 'person-me';
 
@@ -50,6 +51,11 @@ const readJsonFile = (file: File): Promise<AppData> =>
     reader.readAsText(file);
   });
 
+const normalizeAppData = (data: AppData): AppData => ({
+  ...data,
+  trips: data.trips.map((trip) => ({ ...trip, baseCurrency: BASE_CURRENCY })),
+});
+
 const Field = ({
   label,
   children,
@@ -73,9 +79,10 @@ const Section = ({ title, children }: { title: string; children: ReactNode }) =>
 );
 
 function App() {
-  const [data, setData] = useState<AppData>(() => loadAppData());
+  const [data, setData] = useState<AppData>(() => normalizeAppData(loadAppData()));
   const [expenseDraft, setExpenseDraft] = useState<ExpenseDraft | null>(null);
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
+  const [activeSettings, setActiveSettings] = useState<'trip' | 'app' | null>(null);
   const [status, setStatus] = useState('');
 
   const selectedTrip = data.trips.find((trip) => trip.id === data.selectedTripId) ?? data.trips[0] ?? null;
@@ -111,17 +118,23 @@ function App() {
   };
 
   const addTrip = () => {
-    const trip = createTrip();
+    const trip = createTrip({
+      baseCurrency: BASE_CURRENCY,
+      categories: selectedTrip?.categories,
+    });
     updateData((current) => ({
       ...current,
       trips: [...current.trips, trip],
       selectedTripId: trip.id,
     }));
     setExpenseDraft(emptyExpenseDraft(trip));
+    setEditingExpenseId(null);
+    setActiveSettings('trip');
   };
 
   const deleteTrip = () => {
     if (!selectedTrip || !confirm(`「${selectedTrip.name}」を削除しますか？関連する支出も削除されます。`)) return;
+    setActiveSettings(null);
     updateData((current) => {
       const trips = current.trips.filter((trip) => trip.id !== selectedTrip.id);
       return {
@@ -136,16 +149,32 @@ function App() {
   const upsertCategory = (category: Category) => {
     if (!selectedTrip) return;
     const exists = selectedTrip.categories.some((item) => item.id === category.id);
-    updateTrip({
-      categories: exists
-        ? selectedTrip.categories.map((item) => (item.id === category.id ? category : item))
-        : [...selectedTrip.categories, category],
-    });
+    updateData((current) => ({
+      ...current,
+      trips: current.trips.map((trip) => ({
+        ...trip,
+        categories: exists
+          ? trip.categories.map((item) => (item.id === category.id ? category : item))
+          : [...trip.categories, category],
+        updatedAt: new Date().toISOString(),
+      })),
+    }));
   };
 
   const removeCategory = (id: string) => {
     if (!selectedTrip) return;
-    updateTrip({ categories: selectedTrip.categories.filter((category) => category.id !== id) });
+    const fallbackCategoryId = selectedTrip.categories.find((category) => category.id !== id)?.id ?? 'cat-other';
+    updateData((current) => ({
+      ...current,
+      trips: current.trips.map((trip) => ({
+        ...trip,
+        categories: trip.categories.filter((category) => category.id !== id),
+        updatedAt: new Date().toISOString(),
+      })),
+      expenses: current.expenses.map((expense) =>
+        expense.categoryId === id ? { ...expense, categoryId: fallbackCategoryId, updatedAt: new Date().toISOString() } : expense,
+      ),
+    }));
   };
 
   const upsertCompanion = (person: Companion) => {
@@ -239,8 +268,9 @@ function App() {
 
     try {
       const imported = await readJsonFile(file);
-      replaceAppData(imported);
-      setData(imported);
+      const normalized = normalizeAppData(imported);
+      replaceAppData(normalized);
+      setData(normalized);
       setExpenseDraft(null);
       setStatus('JSONをインポートしました。');
     } catch {
@@ -304,11 +334,17 @@ function App() {
           <div>
             <h1>{selectedTrip.name}</h1>
             <p>
-              {selectedTrip.startDate} - {selectedTrip.endDate} / 基準通貨 {selectedTrip.baseCurrency}
+              {selectedTrip.startDate} - {selectedTrip.endDate}
             </p>
           </div>
           <div className="top-actions">
-            <button type="button" onClick={() => exportExpensesCsv(selectedTrip, tripExpenses)}>
+            <button type="button" onClick={() => setActiveSettings('trip')}>
+              旅行を編集
+            </button>
+            <button type="button" onClick={() => setActiveSettings('app')}>
+              全体設定
+            </button>
+            <button type="button" onClick={() => exportExpensesCsv({ ...selectedTrip, baseCurrency: BASE_CURRENCY }, tripExpenses)}>
               CSVエクスポート
             </button>
             <button type="button" onClick={() => exportJson(data)}>
@@ -444,7 +480,7 @@ function App() {
                         <td className="number">{formatNumber(expense.amount)}</td>
                         <td>{expense.currency}</td>
                         <td className="number">{formatNumber(expense.exchangeRate)}</td>
-                        <td className="number">{formatMoney(toBaseAmount(expense), selectedTrip.baseCurrency)}</td>
+                        <td className="number">{formatMoney(toBaseAmount(expense), BASE_CURRENCY)}</td>
                         <td>{categories.get(expense.categoryId) ?? ''}</td>
                         <td>{companions.get(expense.payerId) ?? ''}</td>
                         <td>{expense.participantIds.map((id) => companions.get(id)).join(' / ')}</td>
@@ -472,52 +508,22 @@ function App() {
               </div>
             </Section>
           </section>
-
-          <aside className="side-column">
-            <Section title="旅行設定">
-              <div className="settings-grid">
-                <Field label="旅行名" wide>
-                  <input value={selectedTrip.name} onChange={(event) => updateTrip({ name: event.target.value })} />
-                </Field>
-                <Field label="開始日">
-                  <input value={selectedTrip.startDate} type="date" onChange={(event) => updateTrip({ startDate: event.target.value })} />
-                </Field>
-                <Field label="終了日">
-                  <input value={selectedTrip.endDate} type="date" onChange={(event) => updateTrip({ endDate: event.target.value })} />
-                </Field>
-                <Field label="基準通貨">
-                  <input
-                    value={selectedTrip.baseCurrency}
-                    maxLength={3}
-                    onChange={(event) => updateTrip({ baseCurrency: event.target.value.toUpperCase() })}
-                  />
-                </Field>
-              </div>
-              <button className="danger-button" type="button" onClick={deleteTrip}>
-                旅行を削除
-              </button>
-            </Section>
-
-            <RatesEditor rates={selectedTrip.defaultRates} onRemove={removeRate} onSave={upsertRate} />
-            <NameEditor title="カテゴリ" items={selectedTrip.categories} prefix="cat" onRemove={removeCategory} onSave={upsertCategory} />
-            <NameEditor title="同行者" items={selectedTrip.companions} prefix="person" onRemove={removeCompanion} onSave={upsertCompanion} />
-          </aside>
         </div>
 
         <section className="summary-board">
           <div className="metric-card">
             <span>総支出</span>
-            <strong>{formatMoney(summary.totalBase, selectedTrip.baseCurrency)}</strong>
+            <strong>{formatMoney(summary.totalBase, BASE_CURRENCY)}</strong>
           </div>
           <div className="metric-card">
             <span>1日あたり平均</span>
-            <strong>{formatMoney(summary.dailyAverageBase, selectedTrip.baseCurrency)}</strong>
+            <strong>{formatMoney(summary.dailyAverageBase, BASE_CURRENCY)}</strong>
           </div>
-          <SummaryTable title="カテゴリ別合計" rows={summary.categoryTotals} currency={selectedTrip.baseCurrency} />
+          <SummaryTable title="カテゴリ別合計" rows={summary.categoryTotals} currency={BASE_CURRENCY} />
           <SummaryTable title="通貨別合計" rows={summary.currencyTotals} />
-          <SummaryTable title="支払者別合計" rows={summary.payerTotals} currency={selectedTrip.baseCurrency} />
-          <SummaryTable title="同行者ごとの実質負担額" rows={summary.personBurden} currency={selectedTrip.baseCurrency} />
-          <SummaryTable title="差額" rows={summary.netBalances} currency={selectedTrip.baseCurrency} showSign />
+          <SummaryTable title="支払者別合計" rows={summary.payerTotals} currency={BASE_CURRENCY} />
+          <SummaryTable title="同行者ごとの実質負担額" rows={summary.personBurden} currency={BASE_CURRENCY} />
+          <SummaryTable title="差額" rows={summary.netBalances} currency={BASE_CURRENCY} showSign />
           <div className="summary-panel">
             <h3>割り勘精算</h3>
             {summary.settlements.length ? (
@@ -525,7 +531,7 @@ function App() {
                 {summary.settlements.map((settlement) => (
                   <li key={`${settlement.fromId}-${settlement.toId}-${settlement.amount}`}>
                     <span>{companions.get(settlement.fromId)} → {companions.get(settlement.toId)}</span>
-                    <strong>{formatMoney(settlement.amount, selectedTrip.baseCurrency)}</strong>
+                    <strong>{formatMoney(settlement.amount, BASE_CURRENCY)}</strong>
                   </li>
                 ))}
               </ul>
@@ -535,9 +541,61 @@ function App() {
           </div>
         </section>
       </main>
+
+      {activeSettings === 'trip' && (
+        <SettingsDialog title="旅行を編集" onClose={() => setActiveSettings(null)}>
+          <Section title="旅行設定">
+            <div className="settings-grid">
+              <Field label="旅行名" wide>
+                <input value={selectedTrip.name} onChange={(event) => updateTrip({ name: event.target.value })} />
+              </Field>
+              <Field label="開始日">
+                <input value={selectedTrip.startDate} type="date" onChange={(event) => updateTrip({ startDate: event.target.value })} />
+              </Field>
+              <Field label="終了日">
+                <input value={selectedTrip.endDate} type="date" onChange={(event) => updateTrip({ endDate: event.target.value })} />
+              </Field>
+            </div>
+            <button className="danger-button" type="button" onClick={deleteTrip}>
+              旅行を削除
+            </button>
+          </Section>
+
+          <NameEditor title="同行者" items={selectedTrip.companions} prefix="person" onRemove={removeCompanion} onSave={upsertCompanion} />
+          <RatesEditor rates={selectedTrip.defaultRates} onRemove={removeRate} onSave={upsertRate} />
+        </SettingsDialog>
+      )}
+
+      {activeSettings === 'app' && (
+        <SettingsDialog title="全体設定" onClose={() => setActiveSettings(null)}>
+          <NameEditor title="カテゴリ" items={selectedTrip.categories} prefix="cat" onRemove={removeCategory} onSave={upsertCategory} />
+        </SettingsDialog>
+      )}
     </div>
   );
 }
+
+const SettingsDialog = ({
+  title,
+  children,
+  onClose,
+}: {
+  title: string;
+  children: ReactNode;
+  onClose: () => void;
+}) => (
+  <div className="dialog-backdrop" role="presentation">
+    <aside className="settings-dialog" aria-label={title}>
+      <header className="dialog-header">
+        <h2>{title}</h2>
+        <button aria-label="閉じる" type="button" onClick={onClose}>
+          ×
+        </button>
+      </header>
+      <div className="dialog-body">{children}</div>
+    </aside>
+  </div>
+);
 
 const SummaryTable = ({
   title,
@@ -598,7 +656,7 @@ const NameEditor = <T extends { id: string; name: string }>({
         ))}
       </div>
       <form
-        className="inline-form"
+        className="inline-form name-form"
         onSubmit={(event) => {
           event.preventDefault();
           if (!name.trim()) return;
@@ -649,7 +707,7 @@ const RatesEditor = ({
         ))}
       </div>
       <form
-        className="inline-form"
+        className="inline-form rate-form"
         onSubmit={(event) => {
           event.preventDefault();
           if (!currency.trim()) return;
